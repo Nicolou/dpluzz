@@ -80,3 +80,8 @@ for i in $(ls *ts); do mv $i part_`printf %03d ${i:7:-8}`.ts; done
 
 # Merger les fichiers
 for i in $(ls *ts); do cat $i >> video.ts; done
+
+# Nettoyage
+rm $fichier
+rm $master
+rm part_*.ts
