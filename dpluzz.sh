@@ -12,14 +12,15 @@
 #
 # date:
 # created:       01-21-2016
-# last modified: 01-26-2016
+# last modified: 02-06-2016
 #===============================================================================
 
-usage="$(basename "$0") [-h] [-f fichier] -- recupere des videos depuis FranceTV Pluzz
+usage="$(basename "$0") [-h] [-f fichier] [-r resolution] -- recupere des videos depuis FranceTV Pluzz
 
 usage :
     -h  aide
     -f  URL de la page HTML de la video a telecharger
+    -r resolution ('high', 'medium', 'low', 'shameful') défaut : 'high'
 
 exemple :
     ./$(basename "$0") -f http://pluzz.francetv.fr/videos/pieces_a_conviction.html"
@@ -29,12 +30,14 @@ if [[ $# -eq 0 ]] ; then
     exit 0
 fi
 
-while getopts ':hf:' option; do
+while getopts ':hf:r:' option; do
   case "$option" in
     h) echo "$usage"
        exit
        ;;
     f) fichier=$OPTARG
+       ;;
+    r) resolution=$OPTARG
        ;;
    \?) printf "illegal option: -%s\n" "$OPTARG" >&2
        echo "$usage" >&2
@@ -42,6 +45,23 @@ while getopts ':hf:' option; do
        ;;
   esac
 done
+
+if [ -n $resolution ]; then
+    resolution="high"
+fi
+if [ $resolution -eq "high"]; then
+    res=3
+fi
+if [ $resolution -eq "medium"]; then
+    res=2
+fi
+if [ $resolution -eq "low"]; then
+    res=1
+fi
+if [ $resolution -eq "shameful"]; then
+    res=0
+fi
+
 
 # Récupérer le code source de la page
 wget $fichier
@@ -68,11 +88,12 @@ master=$(echo $master | sed 's/\\//g')
 
 # Récupérer la liste de lecture
 wget $master
-# Récupérer la liste de lecture en HD
-wget $(tail -n1 master.m3u8)
+# Récupérer la liste de lecture à la résolution désirée
+index=$(grep -P "index_"$res"_av" master.m3u8)
+wget $index
 
 # Récupérer les parties de la vidéo
-more index_*_av.m3u8* | xargs wget
+more index_${res}_av.m3u8* | xargs wget
 
 # Renommer (pour nettoyer les noms de fichiers puis pour réindexer)
 rename 's/\?null=//g' *
