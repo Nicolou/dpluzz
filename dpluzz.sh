@@ -4,6 +4,8 @@
 #
 # author: 
 # Marc B.R. Joos <marc.joos@gmail.com>
+# Contribut:
+# Nicolou  <nicolasMontarnal29@gmail.com>
 #
 # copyrights:
 # Copyrights 2016, Marc Joos
@@ -12,25 +14,31 @@
 #
 # date:
 # created:       01-21-2016
-# last modified: 02-06-2016
+# last modified: 01-05-2017
 #===============================================================================
 
-usage="$(basename "$0") [-h] [-f fichier] [-r resolution] -- recupere des videos depuis FranceTV Pluzz
+#some appli setting
+# where we download temp file
+TPD=/tmp/dpluzz
+
+
+usage="$(basename "$0") [-h] [-v] [-f fichier] [-r resolution] -- recupere des videos depuis FranceTV Pluzz
 
 usage :
     -h  aide
     -f  URL de la page HTML de la video a telecharger
     -r resolution ('high', 'medium', 'low', 'shameful') défaut : 'high'
+    -v verbose on	
 
 exemple :
     ./$(basename "$0") -f http://pluzz.francetv.fr/videos/pieces_a_conviction.html"
 
 if [[ $# -eq 0 ]] ; then
-    echo "Lancer $(basename "$0") -h pour obtenir l'aide de ce script"
-    exit 0
+       echo "$usage" >&2
+       exit 1
 fi
 
-while getopts ':hf:r:' option; do
+while getopts ':hf:r:v' option; do
   case "$option" in
     h) echo "$usage"
        exit
@@ -39,6 +47,8 @@ while getopts ':hf:r:' option; do
        ;;
     r) resolution=$OPTARG
        ;;
+    d) VERB=1
+       ;;
    \?) printf "illegal option: -%s\n" "$OPTARG" >&2
        echo "$usage" >&2
        exit 1
@@ -46,63 +56,81 @@ while getopts ':hf:r:' option; do
   esac
 done
 
-if [ -n $resolution ]; then
+if [ -z $fichier ]; then
+       echo "$usage" >&2
+       exit 
+fi
+
+
+if [ -z $resolution ]; then
     resolution="high"
 fi
-if [ $resolution -eq "high"]; then
+if [ "$resolution" = "high" ]; then
     res=3
 fi
-if [ $resolution -eq "medium"]; then
+if [ "$resolution" = "medium" ]; then
     res=2
 fi
-if [ $resolution -eq "low"]; then
+if [ "$resolution" = "low" ]; then
     res=1
 fi
-if [ $resolution -eq "shameful"]; then
+if [ "$resolution" = "shameful" ]; then
     res=0
 fi
 
+if [ -n $VERB ] ; then echo -e "\033[32m Résolution choisie : $resolution , res=$res  \033[0m"; fi
+
+#suppression du repertoire temp et re-creation
+rm -r $TPD
+mkdir -p $TPD
 
 # Récupérer le code source de la page
-wget $fichier
+wget -q -O $TPD/scr.html $fichier
 
 # Récupérer l'ID de la vidéo à télécharger
-fichier=$(basename $fichier)
-ID=`grep -oP "image/.*emissions/(\d+)" $fichier | grep -oP "\d+"`
-set -- $ID
-ID=$1
+ID=`grep -oP "image/.*emissions/(\d+)" $TPD/scr.html | grep -oP "\d+" | tail -1`
+
+if [ -n $VERB ] ; then echo -e "\033[32m l'identifiant de l'emission est $ID \033[0m"; fi
+
 
 # Version alternative en utilisant des listes
 # lID=($ID)
 # ID=${lID[0]}
 
 # Récupérer le JSON contenant les infos de la vidéo dont la liste de lecture
-wget http://webservices.francetelevisions.fr/tools/getInfosOeuvre/v2/?idDiffusion=$ID\&catalogue=Pluzz
+wget -q -O $TPD/jsonfile.json http://webservices.francetelevisions.fr/tools/getInfosOeuvre/v2/?idDiffusion=$ID\&catalogue=Pluzz
 
 # Trouver la liste de lecture dans le JSON
-master=$(grep -oP "http:\\\/\\\/repl[^\"]*master\.m3u8" index.html\?idDiffusion\=$ID\&catalogue\=Pluzz)
-set -- $master
-master=$1
+master=$(grep -oP "http:\\\/\\\/repl[^\"]*master\.m3u8" $TPD/jsonfile.json | tail -1)
 # Enlève les backslashes
 master=$(echo $master | sed 's/\\//g')
 
+if [ -n $VERB ] ; then echo -e "\033[32m recuperation du fichier json de liste de lecture $TPD/jsonfile.json \n master=$master \033[0m"; fi
+
+
 # Récupérer la liste de lecture
-wget $master
+wget -q -O $TPD/master.m3u8 $master
 # Récupérer la liste de lecture à la résolution désirée
-index=$(grep -P "index_"$res"_av" master.m3u8)
-wget $index
+index=$(grep -P "index_"$res"_av" $TPD/master.m3u8)
+if [ -n $VERB ] ; then echo -e "\033[32m recuperation pour la résolution $res : $index \033[0m"; fi
 
-# Récupérer les parties de la vidéo
-more index_${res}_av.m3u8* | xargs wget
+wget -q -O $TPD/lstRes.txt $index
 
-# Renommer (pour nettoyer les noms de fichiers puis pour réindexer)
-rename 's/\?null=//g' *
-for i in $(ls *ts); do mv $i part_`printf %03d ${i:7:-8}`.ts; done
+
+if [ -n $VERB ] ; then echo -e "\033[32m Liste des fichiers à récupérer dans $ $TPD/lstRes.txt  \033[0m"; fi
+NBF=$(cat $TPD/lstRes.txt | grep http | wc -l)
+if [ -n $VERB ] ; then echo -e "\033[32m     nbr de fichiers : $NBF  \n  \033[0m"; fi
+
+# Récupérer ls parties de la vidéo
+i=1
+for f in $(cat $TPD/lstRes.txt | grep http); do
+	echo -n " `printf %03d ${i}`.ts  "
+	wget -q -O $TPD/`printf %03d ${i}`.ts $f
+	i=$(($i+1));
+done  
+echo ""
+
 
 # Merger les fichiers
-for i in $(ls *ts); do cat $i >> video.ts; done
+for i in $(ls $TPD/*ts); do cat $i >> video_$ID.ts; done
 
-# Nettoyage
-rm $fichier
-rm $master
-rm part_*.ts
